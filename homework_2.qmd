@@ -1,0 +1,185 @@
+---
+title: "EDS 223: Homework Assignment 2"
+subtitle: "title"
+author: "Karolina Sienko"
+date: 10-15-2026
+format:
+ pdf:
+  toc: false
+  code-fold: false
+execute:
+ echo: true
+ warning: false
+ message: false
+ results: hide
+---
+
+```{r}
+#| results: hide
+
+# Loading necessary packages
+library(tidyverse)
+library(sf)
+library(here)
+library(tmap)
+library(spData)
+
+# Read in geodatabase of EJScreen data at the Census Block Group level
+ejscreen <- sf::st_read(here::here("data", 
+"ejscreen","EJSCREEN_2023_BG_StatePct_with_AS_CNMI_GU_VI.gdb")) 
+
+# Filter to California
+ca <- ejscreen %>%
+  dplyr::filter(ST_ABBREV == "CA") 
+
+# Filter to LA county
+los_angeles <- ca %>%
+  dplyr::filter(CNTY_NAME %in% c("Los Angeles County"))
+
+# Find the average values for all variables within counties
+ca_counties <- aggregate(ca, by = list(ca$CNTY_NAME), FUN = mean)
+
+
+# Read in HOLC Redlining
+mapping_ineq <- sf::st_read(here::here("data", 
+"mapping-inequality","mapping-inequality-los-angeles.json")) 
+
+
+# Read in bike and pedestrian crash reports
+crashes <- sf::st_read(here::here("data", 
+"SWITRS_LA","crashes.csv"))
+```
+
+
+```{r}
+# Make sure to check that these datasets have the same coordinate reference systems!
+# If not, transform them to match.
+
+st_crs(los_angeles) == st_crs(mapping_ineq) # returns FALSE
+
+mapping_ineq_transform <- st_transform(mapping_ineq, crs = st_crs(los_angeles))
+```
+
+```{r}
+# Checking if CRSs match
+if(st_crs(los_angeles) == st_crs(mapping_ineq_transform)){
+  print("It's a match!")
+}else {
+  print("Still not a match.")
+}
+```
+
+## Part 1: Legacy of redlining in current environmental (in)justice
+
+1. Create a map of historical redlining neighborhoods, including:
+* neighborhoods colored by HOLC grade
+* an appropriate base map
+* a clear title and legend
+
+```{r}
+tmap_mode('plot')
+
+# Map of historical redlining neighborhoods
+tm_shape(los_angeles) +
+    tm_polygons(lwd = 0.15) +
+tm_shape(mapping_ineq_transform, is.main = TRUE) +
+    tm_polygons(fill = 'grade', 
+                fill.scale = tm_scale(values = "-plasma"),
+                fill.legend = tm_legend(title = 'HOLC Grade')) +
+    tm_title(text = 'Redlined Neighborhoods in Los Angeles County with HOLC Grade ') +
+tm_compass() +
+tm_scalebar(position = c('bottom', 'right'))
+```
+
+
+2. Create a table summarizing:
+* the percentage of census block groups that fall within each HOLC grade
+* Also include the percent of census block groups that don’t fall within a HOLC grade in your table
+* **Hint:** The HOLC data contains the grades and the EJScreen data contains the census blocks, so you will need to combine the data spatially before doing summary statistics. Once you combine and no longer need the geometries, you can use `st_drop_geometry()`.
+
+```{r}
+pct_block_per_grade <- st_join(los_angeles, mapping_ineq_transform) |>  # left joining data
+    st_drop_geometry() |>  # dropping geometries
+    count(grade) |> # finding total census blocks per HOLC grade
+    mutate(percent = round(n / sum(n) * 100, 2)) |> # adding a percentage column
+    select(-n) # dropping `n` column
+pct_block_per_grade
+```
+
+
+
+3. Create at least two visualizations summarizing current conditions (from the EJScreen data) within HOLC grades using the mean of the following variables (you may combine variables in a single visualization or look at a single variable per plot):
+* % low income
+* percentile for Particulate Matter 2.5
+* percentile for low life expectancy
+* Use `ggplot` for your visualizations! You will first need to calculate mean of each variable grouped by HOLC grade.
+
+```{r}
+df_joined <- st_join(los_angeles, mapping_ineq_transform) |>  # left joining data
+    st_drop_geometry()
+
+color_dict <- c(
+    'A' = 'chartreuse3',
+    'B' = 'gold1',
+    'C' = 'chocolate1',
+    'D' = 'red2'
+)
+```
+```{r}
+# Average percent low income
+df_joined |> 
+    group_by(grade) |> 
+    summarize(avg_pct_lowinc = mean(LOWINCPCT, na.rm = FALSE)*100) |> 
+    drop_na() |> 
+    ggplot(aes(x = grade, y = avg_pct_lowinc, fill = grade)) +
+    geom_col() +
+    labs(
+        title = 'Average % Low Income by\nHOLC Grade in LA County',
+        x = 'HOLC Grade',
+        y = 'Percent (%)',
+        fill = 'HOLC Grade'
+    ) +
+    scale_fill_manual(values = color_dict)
+```
+
+```{r}
+# Average percentile PM2.5
+df_joined |> 
+    group_by(grade) |> 
+    summarize(avg_pm25 = mean(P_PM25, na.rm = TRUE)) |> 
+    drop_na() |>
+    ggplot(aes(x = grade, y = avg_pm25, fill = grade)) +
+    geom_col() +
+    labs(
+        title = 'Average Percentile for PM2.5 by\nHOLC Grade in LA County',
+        x = 'HOLC Grade',
+        y = 'Percentile',
+        fill = 'HOLC Grade'
+    ) +
+    scale_fill_manual(values = color_dict)
+```
+
+```{r}
+# Average percentile low life expectancy
+df_joined |> 
+    group_by(grade) |> 
+    summarize(avg_pm25 = mean(P_LIFEEXPPCT, na.rm = TRUE)) |> 
+    drop_na() |>
+    ggplot(aes(x = grade, y = avg_pm25, fill = grade)) +
+    geom_col() +
+    labs(
+        title = 'Average Percentile for Low Life\nExpectancy by HOLC Grade in LA County',
+        x = 'HOLC Grade',
+        y = 'Percentile',
+        fill = 'HOLC Grade'
+    ) +
+    scale_fill_manual(values = color_dict)
+```
+
+
+
+4. Write a brief paragraph reflecting on these results
+* Interpret the patterns you observe in your results
+* Discuss potential relationships between historical redlining grades and current environmental/socioeconomic conditions
+
+Across all three graphs, it is apparent that areas with better historical redlining grades tend to have better current environmental and socioeconomic conditions. Areas with an A grade have a low income population percentage of 15%, and the percentages increase with each grade, ending with almost 40% in grade D areas. Average PM2.5 percentiles also increase as the grades go on, with grade A areas sitting at about the 72nd percentile, grade B at the 76th, grade C at the 79th, and grade D at the 80th. Average low life expectancy percentiles show a simialr trend: grade A areas sit at about the 24th percentile, grade B at the 37th, grade C at the 48th, and grade D at the 53rd. These patterns suggest a potential relationship between redlining and today's environmental and socioeconomic inequalities. Although these results don't necessarily prove that these inequalities were directly caused by redlining, they show how historical housing discrimination may be associated with differences in income, air quality, and life expectancy.
